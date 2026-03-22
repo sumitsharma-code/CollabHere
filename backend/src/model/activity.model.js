@@ -21,6 +21,7 @@ const activitySchema = new mongoose.Schema({
             "transferred_ownership",
             "created_document",
             "updated_document",
+            "saved_document",
             "deleted_document"
         ],
         required: true

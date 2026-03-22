@@ -32,6 +32,7 @@ async function getWorkspaces(req, res) {
         const workspaces = await workspaceModel
             .find({ "members.user": userId })
             .select("name members createdAt")
+            .populate("members.user", "username email")
             .sort({ createdAt: -1 });
         res.status(200).json({
             message: "Workspaces retrieved successfully",
@@ -45,7 +46,9 @@ async function getWorkspaces(req, res) {
 
 async function getWorkspaceById(req, res) {
     try {
-        const workspace = req.workspace;
+        const workspace = await workspaceModel
+            .findById(req.workspace._id)
+            .populate("members.user", "username email");
         res.status(200).json({
             message: "Workspace retrieved successfully",
             workspace
@@ -109,9 +112,14 @@ async function addMember(req, res) {
         // Log activity
         await logActivity(workspaceId, userId, "added_member", userToAdd._id, null, `Added ${userToAdd.email} as ${role}`);
 
+        // Re-fetch with population so frontend gets names immediately
+        const populatedWorkspace = await workspaceModel
+            .findById(workspaceId)
+            .populate("members.user", "username email");
+
         res.status(200).json({
             message: "Member added successfully",
-            workspace
+            workspace: populatedWorkspace
         });
     } catch (err) {
         console.error("Add Member Error:", err.message);
@@ -337,6 +345,53 @@ async function updateDocument(req, res) {
     }
 }
 
+// 🔥 New: Save document content (auto-save endpoint)
+async function saveDocumentContent(req, res) {
+    const workspaceId = req.params.workspaceId;
+    const documentId = req.params.documentId;
+    const userId = req.user.id;
+    const { content } = req.body;
+
+    // Validate required fields
+    if (typeof content !== 'string') {
+        return res.status(400).json({ message: "Content must be a string" });
+    }
+
+    try {
+        // Find document and update content with lastEditedBy
+        const document = await documentModel.findOneAndUpdate(
+            { _id: documentId, workspaceId: workspaceId },
+            { 
+                content, 
+                lastEditedBy: userId,
+                updatedAt: new Date()
+            },
+            { new: true }
+        ).select("_id title content lastEditedBy updatedAt");
+
+        if (!document) {
+            return res.status(404).json({
+                message: "Document not found in this workspace"
+            });
+        }
+
+        // Log activity (lighter than full update log)
+        await logActivity(workspaceId, userId, "saved_document", null, documentId, `Auto-saved document`);
+
+        res.status(200).json({
+            message: "Document saved successfully",
+            document: {
+                _id: document._id,
+                savedAt: document.updatedAt,
+                lastEditedBy: document.lastEditedBy
+            }
+        });
+    } catch (err) {
+        console.error("Save Document Error:", err.message);
+        return res.status(500).json({ message: "Failed to save document" });
+    }
+}
+
 async function deleteDocument(req, res) {
     const workspaceId = req.params.workspaceId;
     const documentId = req.params.documentId;
@@ -415,4 +470,25 @@ async function transferOwnership(req, res) {
     }
 }
 
-module.exports = { createWorkspace, getWorkspaces, getWorkspaceById, addMember, removeMember, leaveWorkspace, addDocument, getDocuments, getDocumentById, updateDocument, deleteDocument, transferOwnership };
+async function deleteWorkspace(req, res) {
+    const workspaceId = req.params.workspaceId;
+    const userRole = req.userRole;
+    try {
+        if (userRole !== "owner") {
+            return res.status(403).json({ message: "Only the workspace owner can delete this workspace" });
+        }
+        await workspaceModel.findByIdAndDelete(workspaceId);
+        // Cascade deletes
+        await documentModel.deleteMany({ workspaceId });
+        const taskModel    = require('../model/task.model');
+        const activityModel = require('../model/activity.model');
+        await taskModel.deleteMany({ workspaceId });
+        await activityModel.deleteMany({ workspaceId });
+        res.status(200).json({ message: "Workspace deleted successfully" });
+    } catch (err) {
+        console.error("Delete Workspace Error:", err.message);
+        res.status(500).json({ message: "Internal Server Error" });
+    }
+}
+
+module.exports = { createWorkspace, getWorkspaces, getWorkspaceById, addMember, removeMember, leaveWorkspace, addDocument, getDocuments, getDocumentById, updateDocument, saveDocumentContent, deleteDocument, transferOwnership, deleteWorkspace };

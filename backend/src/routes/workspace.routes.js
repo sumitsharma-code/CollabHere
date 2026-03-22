@@ -98,6 +98,17 @@ router.patch(
     checkDocumentPermission('update'),
     workspaceController.updateDocument
 );
+
+// 🔥 Save document content (auto-save endpoint)
+router.put(
+    "/:workspaceId/documents/:documentId",
+    authMiddleware.authUser,
+    workspaceValidation.validateObjectId,
+    checkWorkspaceAccess,
+    checkDocumentPermission('update'),
+    workspaceController.saveDocumentContent
+);
+
 // delete a specific document in a workspace
 router.delete(
     "/:workspaceId/documents/:documentId",
@@ -114,6 +125,16 @@ router.get(
     workspaceValidation.validateObjectId,
     checkWorkspaceAccess,
     activityController.getActivityLogs
+);
+
+// Delete workspace (owner only)
+router.delete(
+    "/:workspaceId",
+    authMiddleware.authUser,
+    workspaceValidation.validateObjectId,
+    checkWorkspaceAccess,
+    checkOwnerAccess,
+    workspaceController.deleteWorkspace
 );
 
 module.exports = router;
